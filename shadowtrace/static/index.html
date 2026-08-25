@@ -1,0 +1,875 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>ShadowTrace — Identity Security</title>
+
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+
+
+<body>
+
+<main>
+
+  <!-- =====================================================
+       HEADER
+       ===================================================== -->
+
+  <header class="hero">
+
+    <div>
+
+      <span class="eyebrow">
+        IDENTITY & ACCESS SECURITY
+      </span>
+
+      <h1>
+        ShadowTrace
+      </h1>
+
+      <p>
+        Authentication anomaly detection and security intelligence.
+      </p>
+
+    </div>
+
+
+    <div class="hero-actions">
+
+      <button
+        id="seed"
+        class="primary"
+        type="button"
+      >
+        Load demo data
+      </button>
+
+
+      <button
+        id="refresh"
+        type="button"
+      >
+        Refresh
+      </button>
+
+    </div>
+
+  </header>
+
+
+
+  <!-- =====================================================
+       SUMMARY
+       ===================================================== -->
+
+  <section
+    class="cards"
+    id="summary"
+  ></section>
+
+
+
+  <!-- =====================================================
+       THREAT CENTER
+       ===================================================== -->
+
+  <section class="panel">
+
+    <div class="section-title">
+
+      <div>
+
+        <span class="eyebrow">
+          THREAT CENTER
+        </span>
+
+        <h2>
+          Recent security alerts
+        </h2>
+
+      </div>
+
+
+      <span
+        id="alert-status"
+        class="muted"
+      ></span>
+
+    </div>
+
+
+    <div id="alerts"></div>
+
+  </section>
+
+
+
+  <!-- =====================================================
+       AUTHENTICATION TELEMETRY
+       ===================================================== -->
+
+  <section class="panel">
+
+    <div class="section-title">
+
+      <div>
+
+        <span class="eyebrow">
+          AUTHENTICATION TELEMETRY
+        </span>
+
+        <h2>
+          Recent events
+        </h2>
+
+      </div>
+
+
+      <div class="filters">
+
+        <input
+          id="user-filter"
+          type="search"
+          placeholder="Filter by user"
+        >
+
+
+        <select id="risk-filter">
+
+          <option value="">
+            All risk levels
+          </option>
+
+          <option>
+            LOW
+          </option>
+
+          <option>
+            MEDIUM
+          </option>
+
+          <option>
+            HIGH
+          </option>
+
+          <option>
+            CRITICAL
+          </option>
+
+        </select>
+
+      </div>
+
+    </div>
+
+
+    <div class="table-wrap">
+
+      <table>
+
+        <thead>
+
+          <tr>
+
+            <th>User</th>
+
+            <th>Time</th>
+
+            <th>Location</th>
+
+            <th>Device</th>
+
+            <th>Result</th>
+
+            <th>Risk</th>
+
+            <th>Signals</th>
+
+          </tr>
+
+        </thead>
+
+
+        <tbody id="events"></tbody>
+
+      </table>
+
+    </div>
+
+  </section>
+
+
+
+  <!-- =====================================================
+       REAL-WORLD INGESTION
+       ===================================================== -->
+
+  <section class="panel integration">
+
+    <div>
+
+      <span class="eyebrow">
+        REAL-WORLD INGESTION
+      </span>
+
+      <h2>
+        Send authentication telemetry to ShadowTrace
+      </h2>
+
+      <p>
+
+        Applications, identity providers, or internal services
+        can POST authentication events to
+        <code>/api/events</code>.
+
+        Set <code>SHADOWTRACE_API_KEY</code> in a real deployment
+        to require the <code>X-API-Key</code> header.
+
+      </p>
+
+    </div>
+
+
+    <pre><code>curl -X POST http://localhost:8000/api/events \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-key" \
+  -d '{
+    "user_id": "alice",
+    "timestamp": "2026-08-24T14:15:00Z",
+    "ip_address": "192.0.2.10",
+    "country": "Canada",
+    "city": "Toronto",
+    "device_id": "alice-laptop",
+    "success": true,
+    "source": "my-application"
+  }'</code></pre>
+
+  </section>
+
+</main>
+
+
+
+<script>
+
+/* =========================================================
+   HELPERS
+   ========================================================= */
+
+const esc = value =>
+  String(value ?? "").replace(
+    /[&<>"']/g,
+    c => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;"
+    }[c])
+  );
+
+
+
+const summaryEl =
+  document.getElementById("summary");
+
+const alertsEl =
+  document.getElementById("alerts");
+
+const eventsEl =
+  document.getElementById("events");
+
+const alertStatus =
+  document.getElementById("alert-status");
+
+const refreshButton =
+  document.getElementById("refresh");
+
+const seedButton =
+  document.getElementById("seed");
+
+
+
+/* =========================================================
+   API HELPER
+   ========================================================= */
+
+async function json(url, options = {}) {
+
+  const response = await fetch(
+    url,
+    {
+      ...options,
+
+      cache: "no-store",
+
+      headers: {
+        ...(options.headers || {}),
+
+        "Cache-Control": "no-cache"
+      }
+    }
+  );
+
+
+  const data =
+    await response.json();
+
+
+  if (!response.ok) {
+
+    throw new Error(
+      data.detail || "Request failed"
+    );
+
+  }
+
+
+  return data;
+
+}
+
+
+
+/* =========================================================
+   SUMMARY
+   ========================================================= */
+
+function renderSummary(s) {
+
+  const values = [
+
+    [
+      "Events",
+      s.total_events
+    ],
+
+    [
+      "Failed Logins",
+      s.failed_logins
+    ],
+
+    [
+      "Open Critical",
+      s.open_critical
+    ],
+
+    [
+      "Open High",
+      s.open_high
+    ],
+
+    [
+      "Open Medium",
+      s.open_medium
+    ],
+
+    [
+      "Open Alerts",
+      s.open_alerts
+    ]
+
+  ];
+
+
+  summaryEl.innerHTML =
+    values.map(
+      ([label, value]) => `
+
+        <article class="stat">
+
+          <span>
+            ${esc(label)}
+          </span>
+
+          <strong>
+            ${esc(value)}
+          </strong>
+
+        </article>
+
+      `
+    ).join("");
+
+}
+
+
+
+/* =========================================================
+   ALERTS
+   ========================================================= */
+
+function renderAlerts(alerts) {
+
+  alertStatus.textContent =
+    alerts.length
+      ? `${alerts.length} open alert(s)`
+      : "No open/high-risk alerts";
+
+
+  alertsEl.innerHTML =
+    alerts.length
+
+      ? alerts.map(
+          alert => `
+
+            <article
+              class="
+                alert
+                ${alert.severity.toLowerCase()}
+                ${alert.status.toLowerCase()}
+              "
+            >
+
+              <div class="alert-main">
+
+                <div class="alert-topline">
+
+                  <span class="badge">
+                    ${esc(alert.severity)}
+                  </span>
+
+                  <span class="status">
+                    ${esc(alert.status)}
+                  </span>
+
+                </div>
+
+
+                <h3>
+                  ${esc(alert.title)}
+                </h3>
+
+
+                <p>
+                  ${esc(alert.message)}
+                </p>
+
+
+                <button
+                  class="ack"
+                  type="button"
+                  data-alert-id="${alert.id}"
+                  data-status="${
+                    alert.status === "OPEN"
+                      ? "ACKNOWLEDGED"
+                      : "OPEN"
+                  }"
+                >
+                  ${
+                    alert.status === "OPEN"
+                      ? "Acknowledge"
+                      : "Re-open"
+                  }
+                </button>
+
+              </div>
+
+
+              <strong>
+                ${esc(alert.user_id)}
+              </strong>
+
+            </article>
+
+          `
+        ).join("")
+
+      : `
+          <p class="muted">
+            No open/high-risk alerts.
+          </p>
+        `;
+
+
+
+  /*
+   * Attach acknowledgement handlers.
+   */
+
+  document
+    .querySelectorAll(".ack")
+    .forEach(button => {
+
+      button.addEventListener(
+        "click",
+        async () => {
+
+          button.disabled = true;
+
+          button.textContent =
+            button.dataset.status === "ACKNOWLEDGED"
+              ? "Acknowledging..."
+              : "Re-opening...";
+
+
+          try {
+
+            await json(
+              `/api/alerts/${button.dataset.alertId}`,
+              {
+                method: "PATCH",
+
+                headers: {
+                  "Content-Type":
+                    "application/json"
+                },
+
+                body: JSON.stringify({
+                  status:
+                    button.dataset.status
+                })
+              }
+            );
+
+
+            /*
+             * Reload BOTH:
+             *
+             * 1. alert list
+             * 2. summary counters
+             *
+             * This is what makes the numbers
+             * immediately reflect acknowledgement.
+             */
+
+            await loadAll();
+
+          } catch (error) {
+
+            alert(error.message);
+
+            button.disabled = false;
+
+          }
+
+        }
+      );
+
+    });
+
+}
+
+
+
+/* =========================================================
+   EVENTS
+   ========================================================= */
+
+function renderEvents(events) {
+
+  eventsEl.innerHTML =
+
+    events.length
+
+      ? events.map(
+          event => `
+
+            <tr>
+
+              <td>
+                <strong>
+                  ${esc(event.user_id)}
+                </strong>
+              </td>
+
+
+              <td>
+                ${new Date(
+                  event.timestamp
+                ).toLocaleString()}
+              </td>
+
+
+              <td>
+                ${esc(event.city)},
+                ${esc(event.country)}
+              </td>
+
+
+              <td>
+                ${esc(event.device_id)}
+              </td>
+
+
+              <td>
+
+                <span
+                  class="${
+                    event.success
+                      ? "success"
+                      : "failure"
+                  }"
+                >
+                  ${
+                    event.success
+                      ? "SUCCESS"
+                      : "FAILED"
+                  }
+                </span>
+
+              </td>
+
+
+              <td>
+
+                <span
+                  class="
+                    risk
+                    ${event.risk_level.toLowerCase()}
+                  "
+                >
+
+                  ${esc(event.risk_level)}
+                  ·
+                  ${esc(event.risk_score)}
+
+                </span>
+
+              </td>
+
+
+              <td>
+
+                ${
+                  event.reasons.length
+
+                    ? event.reasons
+                        .map(esc)
+                        .join(" · ")
+
+                    : "None"
+                }
+
+              </td>
+
+            </tr>
+
+          `
+        ).join("")
+
+      : `
+
+          <tr>
+
+            <td
+              colspan="7"
+              class="muted empty"
+            >
+              No matching events.
+            </td>
+
+          </tr>
+
+        `;
+
+}
+
+
+
+/* =========================================================
+   LOAD EVERYTHING
+   ========================================================= */
+
+async function loadAll() {
+
+  const originalText =
+    refreshButton.textContent;
+
+
+  refreshButton.disabled = true;
+
+  refreshButton.textContent =
+    "Refreshing...";
+
+
+  try {
+
+    const [
+      summary,
+      alerts,
+      events
+    ] = await Promise.all([
+
+      json(
+        "/api/summary"
+      ),
+
+      json(
+        "/api/alerts?status=OPEN"
+      ),
+
+      json(
+        "/api/events?limit=100"
+      )
+
+    ]);
+
+
+    renderSummary(summary);
+
+    renderAlerts(alerts);
+
+
+    /*
+     * Apply current filters locally.
+     */
+
+    const user =
+      document
+        .getElementById("user-filter")
+        .value
+        .trim()
+        .toLowerCase();
+
+
+    const risk =
+      document
+        .getElementById("risk-filter")
+        .value;
+
+
+    const filteredEvents =
+      events.filter(event => {
+
+        const userMatches =
+          !user ||
+          event.user_id
+            .toLowerCase()
+            .includes(user);
+
+
+        const riskMatches =
+          !risk ||
+          event.risk_level === risk;
+
+
+        return (
+          userMatches &&
+          riskMatches
+        );
+
+      });
+
+
+    renderEvents(
+      filteredEvents
+    );
+
+
+  } catch (error) {
+
+    alertStatus.textContent =
+      error.message;
+
+  } finally {
+
+    refreshButton.disabled = false;
+
+    refreshButton.textContent =
+      originalText;
+
+  }
+
+}
+
+
+
+/* =========================================================
+   LOAD DEMO DATA
+   ========================================================= */
+
+seedButton.addEventListener(
+  "click",
+  async () => {
+
+    seedButton.disabled = true;
+
+    seedButton.textContent =
+      "Seeding...";
+
+
+    try {
+
+      const result =
+        await json(
+          "/api/demo/seed",
+          {
+            method: "POST"
+          }
+        );
+
+
+      await loadAll();
+
+
+      alertStatus.textContent =
+        `${result.events} demo events loaded.`;
+
+    } catch (error) {
+
+      alert(
+        error.message
+      );
+
+    } finally {
+
+      seedButton.disabled = false;
+
+      seedButton.textContent =
+        "Load demo data";
+
+    }
+
+  }
+);
+
+
+
+/* =========================================================
+   REFRESH
+   ========================================================= */
+
+refreshButton.addEventListener(
+  "click",
+  loadAll
+);
+
+
+
+/* =========================================================
+   FILTERS
+   ========================================================= */
+
+document
+  .getElementById("user-filter")
+  .addEventListener(
+    "input",
+    loadAll
+  );
+
+
+document
+  .getElementById("risk-filter")
+  .addEventListener(
+    "change",
+    loadAll
+  );
+
+
+
+/* =========================================================
+   INITIAL LOAD
+   ========================================================= */
+
+loadAll();
+
+</script>
+
+</body>
+
+</html>
